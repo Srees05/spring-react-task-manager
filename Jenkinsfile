@@ -2,21 +2,35 @@ pipeline {
     agent any
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Verify Project') {
+        stage('Build & Test Backend') {
             steps {
-                bat '''
-                    echo Checking project structure...
-                    if not exist backend\\pom.xml exit /b 1
-                    if not exist frontend\\package.json exit /b 1
-                    echo Project structure verified.
-                '''
+                dir('backend') {
+                    bat 'mvnw.cmd -B clean verify'
+                }
             }
+        }
+
+    }
+
+    post {
+        always {
+            junit allowEmptyResults: true,
+                  testResults: 'backend/target/surefire-reports/*.xml'
+        }
+
+        success {
+            echo 'Backend Build & Tests: SUCCESS'
+        }
+
+        failure {
+            echo 'Backend Build & Tests: FAILED'
         }
     }
 }
