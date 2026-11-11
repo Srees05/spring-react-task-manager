@@ -2,11 +2,8 @@
 pipeline {
     agent any
 
-    tools {
-        // Uses the scanner configured in Jenkins Tools
-    }
-
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -51,7 +48,7 @@ pipeline {
                             -Dsonar.sources=backend/src/main,frontend/src ^
                             -Dsonar.tests=backend/src/test ^
                             -Dsonar.java.binaries=backend/target/classes ^
-                            -Dsonar.exclusions=**/node_modules/**,**/dist/**
+                            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/target/**
                         """
                     }
                 }
