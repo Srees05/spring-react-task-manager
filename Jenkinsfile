@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -17,6 +18,22 @@ pipeline {
             }
         }
 
+        stage('Frontend Build & Lint') {
+            steps {
+                dir('frontend') {
+                    bat '''
+                        call npm ci
+                        if errorlevel 1 exit /b 1
+
+                        call npm run lint
+                        if errorlevel 1 exit /b 1
+
+                        call npm run build
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
+            }
+        }
     }
 
     post {
@@ -26,11 +43,11 @@ pipeline {
         }
 
         success {
-            echo 'Backend Build & Tests: SUCCESS'
+            echo 'CI Pipeline: SUCCESS'
         }
 
         failure {
-            echo 'Backend Build & Tests: FAILED'
+            echo 'CI Pipeline: FAILED'
         }
     }
 }
