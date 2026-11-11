@@ -6,6 +6,10 @@ pipeline {
         BACKEND_IMAGE  = 'taskmanager-backend'
         FRONTEND_IMAGE = 'taskmanager-frontend'
         IMAGE_TAG      = "${BUILD_NUMBER}"
+
+        AWS_DEFAULT_REGION = 'eu-north-1'
+        ECR_REGISTRY = '726701726154.dkr.ecr.eu-north-1.amazonaws.com'
+        ECR_REPO = 'taskmanager'
     }
 
     stages {
@@ -129,6 +133,93 @@ pipeline {
                 }
             }
         }
+
+        stage('AWS ECR Login') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'jenkins_ecr_access_key',
+                        variable: 'AWS_ACCESS_KEY_ID'
+                    ),
+                    string(
+                        credentialsId: 'jenkins_ecr_secret_key',
+                        variable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    bat '''
+                        @echo off
+                        aws ecr get-login-password --region %AWS_DEFAULT_REGION% | docker login --username AWS --password-stdin %ECR_REGISTRY%
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
+            }
+        }
+
+        stage('Tag Docker Images for ECR') {
+            steps {
+                bat '''
+                    docker tag %BACKEND_IMAGE%:%IMAGE_TAG% %ECR_REGISTRY%/%ECR_REPO%:backend-build-%IMAGE_TAG%
+                    if errorlevel 1 exit /b 1
+
+                    docker tag %FRONTEND_IMAGE%:%IMAGE_TAG% %ECR_REGISTRY%/%ECR_REPO%:frontend-build-%IMAGE_TAG%
+                    if errorlevel 1 exit /b 1
+                '''
+            }
+        }
+
+        stage('Push Backend Image to ECR') {
+            steps {
+                bat '''
+                    docker push %ECR_REGISTRY%/%ECR_REPO%:backend-build-%IMAGE_TAG%
+                    if errorlevel 1 exit /b 1
+                '''
+            }
+        }
+
+        stage('Push Frontend Image to ECR') {
+            steps {
+                bat '''
+                    docker push %ECR_REGISTRY%/%ECR_REPO%:frontend-build-%IMAGE_TAG%
+                    if errorlevel 1 exit /b 1
+                '''
+            }
+        }
+
+        stage('Verify ECR Images') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'jenkins_ecr_access_key',
+                        variable: 'AWS_ACCESS_KEY_ID'
+                    ),
+                    string(
+                        credentialsId: 'jenkins_ecr_secret_key',
+                        variable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    bat '''
+                        @echo off
+                        aws ecr describe-images ^
+                          --repository-name %ECR_REPO% ^
+                          --region %AWS_DEFAULT_REGION% ^
+                          --image-ids imageTag=backend-build-%IMAGE_TAG% ^
+                          --query "imageDetails[0].imageDigest" ^
+                          --output text
+                        if errorlevel 1 exit /b 1
+
+                        aws ecr describe-images ^
+                          --repository-name %ECR_REPO% ^
+                          --region %AWS_DEFAULT_REGION% ^
+                          --image-ids imageTag=frontend-build-%IMAGE_TAG% ^
+                          --query "imageDetails[0].imageDigest" ^
+                          --output text
+                        if errorlevel 1 exit /b 1
+
+                        echo Both Docker images verified in AWS ECR.
+                    '''
+                }
+            }
+        }
     }
 
     post {
@@ -138,12 +229,13 @@ pipeline {
         }
 
         success {
-            echo 'CI Pipeline: SUCCESS'
-            echo "Docker images created with tag: ${env.IMAGE_TAG}"
+            echo 'CI PIPELINE COMPLETED SUCCESSFULLY'
+            echo "Backend: ${env.ECR_REGISTRY}/${env.ECR_REPO}:backend-build-${env.IMAGE_TAG}"
+            echo "Frontend: ${env.ECR_REGISTRY}/${env.ECR_REPO}:frontend-build-${env.IMAGE_TAG}"
         }
 
         failure {
-            echo 'CI Pipeline: FAILED'
+            echo 'CI PIPELINE FAILED'
         }
     }
 }
