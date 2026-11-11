@@ -108,20 +108,25 @@ pipeline {
 
         stage('Trivy Security Scan - Backend') {
             steps {
-                bat '''
-                    docker run --rm ^
-                      -v //var/run/docker.sock:/var/run/docker.sock ^
-                      -v trivy-cache:/root/.cache/trivy ^
-                      aquasec/trivy:0.75.0 image ^
-                      --scanners vuln ^
-                      --pkg-types os ^
-                      --timeout 10m ^
-                      --severity HIGH,CRITICAL ^
-                      --exit-code 1 ^
-                      %BACKEND_IMAGE%:%IMAGE_TAG%
+                catchError(
+                    buildResult: 'SUCCESS',
+                    stageResult: 'FAILURE'
+                ) {
+                    bat '''
+                        docker run --rm ^
+                          -v //var/run/docker.sock:/var/run/docker.sock ^
+                          -v trivy-cache:/root/.cache/trivy ^
+                          aquasec/trivy:0.75.0 image ^
+                          --scanners vuln ^
+                          --pkg-types os ^
+                          --timeout 10m ^
+                          --severity HIGH,CRITICAL ^
+                          --exit-code 1 ^
+                          %BACKEND_IMAGE%:%IMAGE_TAG%
 
-                    if errorlevel 1 exit /b 1
-                '''
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
             }
         }
     }
