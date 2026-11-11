@@ -2,6 +2,12 @@
 pipeline {
     agent any
 
+    environment {
+        BACKEND_IMAGE  = 'taskmanager-backend'
+        FRONTEND_IMAGE = 'taskmanager-frontend'
+        IMAGE_TAG      = "${BUILD_NUMBER}"
+    }
+
     stages {
 
         stage('Checkout') {
@@ -10,7 +16,7 @@ pipeline {
             }
         }
 
-        stage('Build & Test Backend') {
+        stage('Backend Build & Unit Tests') {
             steps {
                 dir('backend') {
                     bat 'mvnw.cmd -B clean verify'
@@ -48,6 +54,7 @@ pipeline {
                             -Dsonar.sources=backend/src/main,frontend/src ^
                             -Dsonar.tests=backend/src/test ^
                             -Dsonar.java.binaries=backend/target/classes ^
+                            -Dsonar.java.test.binaries=backend/target/test-classes ^
                             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/target/**
                         """
                     }
@@ -62,6 +69,42 @@ pipeline {
                 }
             }
         }
+
+        stage('Docker Build - Backend') {
+            steps {
+                dir('backend') {
+                    bat '''
+                        docker build -t %BACKEND_IMAGE%:%IMAGE_TAG% .
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
+            }
+        }
+
+        stage('Docker Build - Frontend') {
+            steps {
+                dir('frontend') {
+                    bat '''
+                        docker build -t %FRONTEND_IMAGE%:%IMAGE_TAG% .
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Docker Images') {
+            steps {
+                bat '''
+                    docker image inspect %BACKEND_IMAGE%:%IMAGE_TAG% >NUL
+                    if errorlevel 1 exit /b 1
+
+                    docker image inspect %FRONTEND_IMAGE%:%IMAGE_TAG% >NUL
+                    if errorlevel 1 exit /b 1
+
+                    echo Both Docker images built successfully.
+                '''
+            }
+        }
     }
 
     post {
@@ -72,6 +115,7 @@ pipeline {
 
         success {
             echo 'CI Pipeline: SUCCESS'
+            echo "Docker images created with tag: ${env.IMAGE_TAG}"
         }
 
         failure {
