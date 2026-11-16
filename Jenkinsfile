@@ -1,6 +1,11 @@
-
+```groovy
 pipeline {
     agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
 
     environment {
         BACKEND_IMAGE  = 'taskmanager-backend'
@@ -10,6 +15,11 @@ pipeline {
         AWS_DEFAULT_REGION = 'eu-north-1'
         ECR_REGISTRY = '726701726154.dkr.ecr.eu-north-1.amazonaws.com'
         ECR_REPO = 'taskmanager'
+
+        EKS_CLUSTER = 'taskmanager-dev-eks'
+        K8S_NAMESPACE = 'taskmanager-dev'
+        HELM_RELEASE = 'taskmanager-dev'
+        HELM_CHART = 'taskmanager-helm'
     }
 
     stages {
@@ -163,25 +173,35 @@ pipeline {
 
                     docker tag %FRONTEND_IMAGE%:%IMAGE_TAG% %ECR_REGISTRY%/%ECR_REPO%:frontend-build-%IMAGE_TAG%
                     if errorlevel 1 exit /b 1
+
+                    echo Both images tagged for ECR.
                 '''
             }
         }
 
         stage('Push Backend Image to ECR') {
             steps {
-                bat '''
-                    docker push %ECR_REGISTRY%/%ECR_REPO%:backend-build-%IMAGE_TAG%
-                    if errorlevel 1 exit /b 1
-                '''
+                retry(3) {
+                    timeout(time: 20, unit: 'MINUTES') {
+                        bat '''
+                            docker push %ECR_REGISTRY%/%ECR_REPO%:backend-build-%IMAGE_TAG%
+                            if errorlevel 1 exit /b 1
+                        '''
+                    }
+                }
             }
         }
 
         stage('Push Frontend Image to ECR') {
             steps {
-                bat '''
-                    docker push %ECR_REGISTRY%/%ECR_REPO%:frontend-build-%IMAGE_TAG%
-                    if errorlevel 1 exit /b 1
-                '''
+                retry(3) {
+                    timeout(time: 15, unit: 'MINUTES') {
+                        bat '''
+                            docker push %ECR_REGISTRY%/%ECR_REPO%:frontend-build-%IMAGE_TAG%
+                            if errorlevel 1 exit /b 1
+                        '''
+                    }
+                }
             }
         }
 
@@ -199,12 +219,14 @@ pipeline {
                 ]) {
                     bat '''
                         @echo off
+
                         aws ecr describe-images ^
                           --repository-name %ECR_REPO% ^
                           --region %AWS_DEFAULT_REGION% ^
                           --image-ids imageTag=backend-build-%IMAGE_TAG% ^
                           --query "imageDetails[0].imageDigest" ^
                           --output text
+
                         if errorlevel 1 exit /b 1
 
                         aws ecr describe-images ^
@@ -213,9 +235,95 @@ pipeline {
                           --image-ids imageTag=frontend-build-%IMAGE_TAG% ^
                           --query "imageDetails[0].imageDigest" ^
                           --output text
+
                         if errorlevel 1 exit /b 1
 
                         echo Both Docker images verified in AWS ECR.
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'jenkins_ecr_access_key',
+                        variable: 'AWS_ACCESS_KEY_ID'
+                    ),
+                    string(
+                        credentialsId: 'jenkins_ecr_secret_key',
+                        variable: 'AWS_SECRET_ACCESS_KEY'
+                    ),
+                    usernamePassword(
+                        credentialsId: 'taskmanager-db-credentials',
+                        usernameVariable: 'DB_USERNAME',
+                        passwordVariable: 'DB_PASSWORD'
+                    ),
+                    string(
+                        credentialsId: 'taskmanager-jwt-secret',
+                        variable: 'JWT_SECRET'
+                    )
+                ]) {
+                    bat '''
+                        @echo off
+
+                        echo Checking AWS identity...
+                        aws sts get-caller-identity
+                        if errorlevel 1 exit /b 1
+
+                        echo Configuring EKS access...
+                        aws eks update-kubeconfig --name %EKS_CLUSTER% --region %AWS_DEFAULT_REGION%
+                        if errorlevel 1 exit /b 1
+
+                        echo Checking Kubernetes access...
+                        kubectl get nodes
+                        if errorlevel 1 exit /b 1
+
+                        echo Ensuring namespace exists...
+                        kubectl create namespace %K8S_NAMESPACE% --dry-run=client -o yaml | kubectl apply -f -
+                        if errorlevel 1 exit /b 1
+
+                        echo Creating/updating application secrets...
+
+                        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
+                          "$ErrorActionPreference = 'Stop';" ^
+                          "$db = @{apiVersion='v1';kind='Secret';metadata=@{name='taskmanager-db-secret';namespace=$env:K8S_NAMESPACE};type='Opaque';data=@{POSTGRES_USER=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($env:DB_USERNAME));POSTGRES_PASSWORD=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($env:DB_PASSWORD))}};" ^
+                          "$dbJson = $db | ConvertTo-Json -Depth 5 -Compress;" ^
+                          "$dbJson | kubectl apply -f -;" ^
+                          "if ($LASTEXITCODE -ne 0) { exit 1 };" ^
+                          "$jwt = @{apiVersion='v1';kind='Secret';metadata=@{name='taskmanager-backend-secret';namespace=$env:K8S_NAMESPACE};type='Opaque';data=@{JWT_SECRET=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($env:JWT_SECRET))}};" ^
+                          "$jwtJson = $jwt | ConvertTo-Json -Depth 5 -Compress;" ^
+                          "$jwtJson | kubectl apply -f -;" ^
+                          "if ($LASTEXITCODE -ne 0) { exit 1 }"
+
+                        if errorlevel 1 exit /b 1
+
+                        echo Deploying current build through Helm...
+
+                        helm upgrade --install %HELM_RELEASE% %HELM_CHART% ^
+                          --namespace %K8S_NAMESPACE% ^
+                          --set-string backend.image.tag=backend-build-%IMAGE_TAG% ^
+                          --set-string frontend.image.tag=frontend-build-%IMAGE_TAG%
+
+                        if errorlevel 1 exit /b 1
+
+                        echo Checking backend rollout...
+                        kubectl rollout status deployment/taskmanager-backend -n %K8S_NAMESPACE% --timeout=300s
+                        if errorlevel 1 exit /b 1
+
+                        echo Checking frontend rollout...
+                        kubectl rollout status deployment/taskmanager-frontend -n %K8S_NAMESPACE% --timeout=300s
+                        if errorlevel 1 exit /b 1
+
+                        echo Checking PostgreSQL rollout...
+                        kubectl rollout status deployment/taskmanager-postgres -n %K8S_NAMESPACE% --timeout=300s
+                        if errorlevel 1 exit /b 1
+
+                        echo Deployment resources:
+                        kubectl get deployments,services,pods -n %K8S_NAMESPACE%
+
+                        echo EKS DEPLOYMENT COMPLETED SUCCESSFULLY.
                     '''
                 }
             }
@@ -229,13 +337,15 @@ pipeline {
         }
 
         success {
-            echo 'CI PIPELINE COMPLETED SUCCESSFULLY'
+            echo 'CI/CD PIPELINE COMPLETED SUCCESSFULLY'
             echo "Backend: ${env.ECR_REGISTRY}/${env.ECR_REPO}:backend-build-${env.IMAGE_TAG}"
             echo "Frontend: ${env.ECR_REGISTRY}/${env.ECR_REPO}:frontend-build-${env.IMAGE_TAG}"
+            echo "Deployed to EKS namespace: ${env.K8S_NAMESPACE}"
         }
 
         failure {
-            echo 'CI PIPELINE FAILED'
+            echo 'CI/CD PIPELINE FAILED'
         }
     }
 }
+```
