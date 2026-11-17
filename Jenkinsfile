@@ -20,6 +20,8 @@ pipeline {
         K8S_NAMESPACE = 'taskmanager-dev'
         HELM_RELEASE = 'taskmanager-dev'
         HELM_CHART = 'taskmanager-helm'
+
+        HELM_EXE = 'C:\\Users\\sreek\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Helm.Helm_Microsoft.Winget.Source_8wekyb3d8bbwe\\windows-amd64\\helm.exe'
     }
 
     stages {
@@ -316,9 +318,18 @@ pipeline {
 
                         if errorlevel 1 exit /b 1
 
+                        echo Checking Helm installation...
+                        if not exist "%HELM_EXE%" (
+                            echo ERROR: Helm executable not found at %HELM_EXE%
+                            exit /b 1
+                        )
+
+                        "%HELM_EXE%" version
+                        if errorlevel 1 exit /b 1
+
                         echo Deploying current build through Helm...
 
-                        helm upgrade --install %HELM_RELEASE% %HELM_CHART% ^
+                        "%HELM_EXE%" upgrade --install %HELM_RELEASE% %HELM_CHART% ^
                           --namespace %K8S_NAMESPACE% ^
                           --set-string backend.image.tag=backend-build-%IMAGE_TAG% ^
                           --set-string frontend.image.tag=frontend-build-%IMAGE_TAG% ^
