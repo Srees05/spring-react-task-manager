@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -75,11 +76,11 @@ pipeline {
             }
         }
 
-        stage('Quality Gate') {
+        // TEMPORARY: Quality Gate wait disabled until webhook is working.
+        stage('Quality Gate - Temporarily Skipped') {
             steps {
-                timeout(time: 10, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
+                echo 'SonarQube analysis submitted. Quality Gate enforcement is temporarily bypassed.'
+                echo 'Check the SonarQube dashboard for the actual Quality Gate result.'
             }
         }
 
@@ -303,7 +304,9 @@ pipeline {
                         helm upgrade --install %HELM_RELEASE% %HELM_CHART% ^
                           --namespace %K8S_NAMESPACE% ^
                           --set-string backend.image.tag=backend-build-%IMAGE_TAG% ^
-                          --set-string frontend.image.tag=frontend-build-%IMAGE_TAG%
+                          --set-string frontend.image.tag=frontend-build-%IMAGE_TAG% ^
+                          --wait ^
+                          --timeout 5m
 
                         if errorlevel 1 exit /b 1
 
