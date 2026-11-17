@@ -1,0 +1,46 @@
+
+replicaCount: 1
+
+imagePullPolicy: IfNotPresent
+
+backend:
+  image:
+    repository: 726701726154.dkr.ecr.eu-north-1.amazonaws.com/taskmanager
+    tag: backend-build-10
+  containerPort: 8080
+  service:
+    type: ClusterIP
+    port: 8080
+  profile: prod
+  secretName: taskmanager-backend-secret
+  database:
+    url: jdbc:postgresql://taskmanager-postgres:5432/taskmanager_db
+
+frontend:
+  image:
+    repository: 726701726154.dkr.ecr.eu-north-1.amazonaws.com/taskmanager
+    tag: frontend-build-10
+  containerPort: 80
+  service:
+    type: LoadBalancer
+    port: 80
+
+postgres:
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  containerPort: 5432
+  service:
+    port: 5432
+  database: taskmanager_db
+  secretName: taskmanager-db-secret
+  persistence:
+    enabled: false
+
+jwt:
+  secretName: taskmanager-backend-secret
+  secretKey: JWT_SECRET
+  expiration: "86400000"
+
+cors:
+  allowedOrigins: "*"
