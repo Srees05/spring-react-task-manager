@@ -19,7 +19,7 @@ pipeline {
         EKS_CLUSTER = 'taskmanager-dev-eks'
         K8S_NAMESPACE = 'taskmanager-dev'
         HELM_RELEASE = 'taskmanager-dev'
-        HELM_CHART = 'taskmanager-helm'
+        HELM_CHART = './taskmanager-helm'
 
         HELM_EXE = 'C:\\Users\\sreek\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Helm.Helm_Microsoft.Winget.Source_8wekyb3d8bbwe\\windows-amd64\\helm.exe'
     }
